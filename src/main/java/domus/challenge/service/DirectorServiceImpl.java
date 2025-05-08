@@ -6,6 +6,7 @@ import domus.challenge.client.MovieRestClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.GroupedFlux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -30,37 +31,60 @@ public class DirectorServiceImpl implements DirectorService {
 
     @Override
     public Flux<String> getDirectorsByThreshold(int threshold) {
-        return Flux.range(1, 100)
-                .concatMap(page -> {
-                    List<Map<String, Object>> cachedMovies = cache.getIfPresent(page);
-                    if (cachedMovies != null) {
-                        log.info("Datos obtenidos del caché para la página {}", page);
-                        return Mono.just(cachedMovies);
-                    }
-                    return movieRestClient.fetchMoviesByPage(page)
-                            .doOnNext(movies -> {
-                                if (movies != null && !movies.isEmpty()) {
-                                    cache.put(page, movies);
-                                    log.info("Datos almacenados en caché para la página {}", page);
-                                }
-                            });
-                })
-                .takeWhile(movies -> movies != null && !movies.isEmpty())
+        return fetchAllMovies()
                 .flatMap(Flux::fromIterable)
-                .map(movie -> (String) movie.get("Director"))
+                .map(this::extractDirector)
                 .filter(Objects::nonNull)
                 .groupBy(director -> director)
-                .flatMap(group -> group.count()
-                        .map(count -> Map.entry(group.key(), count))
-                        .onErrorResume(e -> {
-                            log.error("Error al contar películas para el director: " + group.key(), e);
-                            return Mono.empty();
-                        }))
+                .flatMap(this::countMoviesByDirector)
                 .filter(entry -> entry.getValue() > threshold)
-                .map(entry -> entry.getKey() + " - " + entry.getValue())
+                .sort((entry1, entry2) -> Long.compare(entry2.getValue(), entry1.getValue())) // Orden descendente por número de películas
+                .map(this::formatDirectorCount)
+                .onErrorResume(this::handleUnexpectedError);
+    }
+
+    private Flux<List<Map<String, Object>>> fetchAllMovies() {
+        return Flux.range(1, 100)
+                .concatMap(this::fetchMoviesByPage)
+                .takeWhile(movies -> movies != null && !movies.isEmpty());
+    }
+
+    private Mono<List<Map<String, Object>>> fetchMoviesByPage(int page) {
+        List<Map<String, Object>> cachedMovies = cache.getIfPresent(page);
+        if (cachedMovies != null) {
+            log.info("Datos obtenidos del caché para la página {}", page);
+            return Mono.just(cachedMovies);
+        }
+        return movieRestClient.fetchMoviesByPage(page)
+                .doOnNext(movies -> cacheMovies(page, movies));
+    }
+
+    private void cacheMovies(int page, List<Map<String, Object>> movies) {
+        if (movies != null && !movies.isEmpty()) {
+            cache.put(page, movies);
+            log.info("Datos almacenados en caché para la página {}", page);
+        }
+    }
+
+    private String extractDirector(Map<String, Object> movie) {
+        return (String) movie.get("Director");
+    }
+
+    private Mono<Map.Entry<String, Long>> countMoviesByDirector(GroupedFlux<String, String> group) {
+        return group.count()
+                .map(count -> Map.entry(group.key(), count))
                 .onErrorResume(e -> {
-                    log.error("Error inesperado en el flujo reactivo", e);
-                    return Flux.empty();
+                    log.error("Error al contar películas para el director: {}", group.key(), e);
+                    return Mono.empty();
                 });
+    }
+
+    private String formatDirectorCount(Map.Entry<String, Long> entry) {
+        return entry.getKey() + " - " + entry.getValue() + "\n";
+    }
+
+    private Flux<String> handleUnexpectedError(Throwable e) {
+        log.error("Error inesperado en el flujo reactivo", e);
+        return Flux.empty();
     }
 }
