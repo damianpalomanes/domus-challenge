@@ -1,7 +1,7 @@
 package domus.challenge.service;
 
-import java.util.List;
+import reactor.core.publisher.Flux;
 
 public interface DirectorService {
-    List<String> getDirectorsByThreshold(int threshold);
+    Flux<String> getDirectorsByThreshold(int threshold);
 }

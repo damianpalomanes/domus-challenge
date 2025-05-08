@@ -14,7 +14,7 @@
     <name>challenge</name>
     <description>Challenge for Domus Global</description>
     <properties>
-        <java.version>21</java.version>
+        <java.version>17</java.version>
     </properties>
     <dependencies>
         <dependency>
