@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.GroupedFlux;
 import reactor.core.publisher.Mono;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import java.util.List;
 import java.util.Map;
@@ -38,15 +40,17 @@ public class DirectorServiceImpl implements DirectorService {
                 .groupBy(director -> director)
                 .flatMap(this::countMoviesByDirector)
                 .filter(entry -> entry.getValue() > threshold)
-                .sort((entry1, entry2) -> Long.compare(entry2.getValue(), entry1.getValue())) // Orden descendente por número de películas
+                .sort((entry1, entry2) -> Long.compare(entry2.getValue(), entry1.getValue()))
                 .map(this::formatDirectorCount)
-                .onErrorResume(this::handleUnexpectedError);
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontraron directores que cumplan con el umbral.")))
+                .onErrorMap(this::mapToAppropriateException);
     }
 
     private Flux<List<Map<String, Object>>> fetchAllMovies() {
         return Flux.range(1, 100)
                 .concatMap(this::fetchMoviesByPage)
-                .takeWhile(movies -> movies != null && !movies.isEmpty());
+                .takeWhile(movies -> movies != null && !movies.isEmpty())
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontraron películas.")));
     }
 
     private Mono<List<Map<String, Object>>> fetchMoviesByPage(int page) {
@@ -56,7 +60,11 @@ public class DirectorServiceImpl implements DirectorService {
             return Mono.just(cachedMovies);
         }
         return movieRestClient.fetchMoviesByPage(page)
-                .doOnNext(movies -> cacheMovies(page, movies));
+                .doOnNext(movies -> cacheMovies(page, movies))
+                .onErrorMap(e -> {
+                    log.error("Error al obtener películas para la página {}", page, e);
+                    return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Error al obtener datos de películas.");
+                });
     }
 
     private void cacheMovies(int page, List<Map<String, Object>> movies) {
@@ -73,18 +81,21 @@ public class DirectorServiceImpl implements DirectorService {
     private Mono<Map.Entry<String, Long>> countMoviesByDirector(GroupedFlux<String, String> group) {
         return group.count()
                 .map(count -> Map.entry(group.key(), count))
-                .onErrorResume(e -> {
+                .onErrorMap(e -> {
                     log.error("Error al contar películas para el director: {}", group.key(), e);
-                    return Mono.empty();
+                    return new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error al procesar datos del director.");
                 });
     }
 
     private String formatDirectorCount(Map.Entry<String, Long> entry) {
-        return entry.getKey() + " - " + entry.getValue() + "\n";
+        return entry.getKey() + " - " + entry.getValue();
     }
 
-    private Flux<String> handleUnexpectedError(Throwable e) {
+    private Throwable mapToAppropriateException(Throwable e) {
         log.error("Error inesperado en el flujo reactivo", e);
-        return Flux.empty();
+        if (e instanceof ResponseStatusException) {
+            return e;
+        }
+        return new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error inesperado en el servicio.");
     }
 }

@@ -5,9 +5,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import domus.challenge.service.DirectorService;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
 
 @RestController
-public class DirectorControllerImpl {
+public class DirectorControllerImpl implements DirectorController {
 
     private final DirectorService directorService;
 
@@ -16,11 +19,13 @@ public class DirectorControllerImpl {
     }
 
     @GetMapping("/api/directors")
-    public Flux<String> getDirectors(@RequestParam("threshold") int threshold) {
+    public Mono<Map<String, Object>> getDirectors(@RequestParam("threshold") int threshold) {
         if (threshold < 0) {
-            throw new IllegalArgumentException("Threshold must be a non-negative integer.");
+            throw new IllegalArgumentException("Threshold debe ser un valor positivo.");
         }
 
-        return directorService.getDirectorsByThreshold(threshold);
+        return directorService.getDirectorsByThreshold(threshold)
+                .collectList()
+                .map(directors -> Map.of("directors", directors));
     }
 }

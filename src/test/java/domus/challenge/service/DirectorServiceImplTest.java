@@ -3,6 +3,8 @@ package domus.challenge.service;
 import domus.challenge.client.MovieRestClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -53,17 +55,20 @@ class DirectorServiceImplTest {
         verify(movieRestClient, times(1)).fetchMoviesByPage(3);
     }
 
-    @Test
-    void testGetDirectorsByThreshold_WithEmptyData() {
-        when(movieRestClient.fetchMoviesByPage(1)).thenReturn(Mono.just(List.of()));
+@Test
+void testGetDirectorsByThreshold_WithEmptyData() {
+    when(movieRestClient.fetchMoviesByPage(1)).thenReturn(Mono.just(List.of()));
 
-        Flux<String> result = directorService.getDirectorsByThreshold(1);
+    Flux<String> result = directorService.getDirectorsByThreshold(1);
 
-        StepVerifier.create(result)
-                .verifyComplete();
+    StepVerifier.create(result)
+            .expectErrorMatches(throwable -> throwable instanceof ResponseStatusException &&
+                    ((ResponseStatusException) throwable).getStatusCode().equals(HttpStatus.NOT_FOUND) &&
+                    throwable.getMessage().contains("No se encontraron películas."))
+            .verify();
 
-        verify(movieRestClient, times(1)).fetchMoviesByPage(1);
-    }
+    verify(movieRestClient, times(1)).fetchMoviesByPage(1);
+}
 
     @Test
     void testGetDirectorsByThreshold_WithError() {
@@ -72,7 +77,10 @@ class DirectorServiceImplTest {
         Flux<String> result = directorService.getDirectorsByThreshold(1);
 
         StepVerifier.create(result)
-                .verifyComplete();
+                .expectErrorMatches(throwable -> throwable instanceof ResponseStatusException &&
+                        ((ResponseStatusException) throwable).getStatusCode().equals(HttpStatus.SERVICE_UNAVAILABLE) &&
+                        throwable.getMessage().contains("Error al obtener datos de películas."))
+                .verify();
 
         verify(movieRestClient, times(1)).fetchMoviesByPage(1);
     }
